@@ -1,0 +1,322 @@
+---
+title: "ESM 204, Homework #2"
+author: "Drew Andersen"
+date: "4/25/2022"
+output: 
+  html_document:
+    code_folding: hide
+---
+```{r setup, include = FALSE, message = FALSE}
+knitr::opts_chunk$set(warning = FALSE, message = FALSE)
+
+library(here)
+library(tidyverse)
+library(kableExtra)
+```
+## Introduction
+- For this exercise, I will simulate a water market for four irrigation districts.
+- Current/baseline water usage is given for each district.
+- Prices are in $/Acre Foot and quantities are in Acre Feet (AF).
+
+## Question 1
+```{r}
+#Loading in the data and baselines
+
+w_data <- read_csv(here("Water_Districts.csv"))[,-1] %>%  #upload and drop first column
+  rename(Kern = MC_Kern, Ventura = MC_Ventura, Mojave = MC_Mojave, Antelope = MC_Antelope)
+
+mc_water <- pivot_longer(w_data, !Reduction, names_to = "District", values_to = "MAC") #pivot table to create column for districts (populated by four districts)
+
+w_base_kern = 150 # Baseline water usage in Acre Ft. These values are E0 for each district
+w_base_moj = 140
+w_base_ant = 220
+w_base_vent = 245 
+
+agg_base = w_base_kern + w_base_moj + w_base_ant + w_base_vent
+# Quantity is Acre Feet and Price is $/Acre Foot
+
+w_abated = 255 #Given by a reduction from 755 AF --> 500 AF
+```
+
+```{r}
+#Linear Regressions of data sets to get slope of each abatement curve
+
+kern_slope <- lm(Kern ~ 0 + Reduction, data = w_data)$coef[1]
+moj_slope <- lm(Mojave ~ 0 + Reduction, data = w_data)$coef[1]
+ant_slope <- lm(Antelope ~ 0 + Reduction, data = w_data)$coef[1]
+vent_slope <- lm(Ventura ~ 0 + Reduction, data = w_data)$coef[1]
+
+agg_a_slope = 1/((1/kern_slope) + (1/moj_slope) + (1/ant_slope) + (1/vent_slope))
+```
+
+```{r, fig.align="center"}
+#plotting abatement curves
+ggplot(data = mc_water, aes (x = Reduction, y = MAC, color = District)) +
+  geom_line() +
+  geom_abline(intercept = 0, slope = kern_slope, color = "blue") +
+  geom_abline(intercept = 0, slope = vent_slope, color = "orange") +
+  geom_abline(intercept = 0, slope = moj_slope, color = "green") + 
+  geom_abline(intercept = 0, slope = ant_slope, color = "red") +
+#geom_abline(intercept = 0, slope = agg_a_slope, color = "purple") +
+
+  scale_color_manual(values = c("red","blue","green","orange")) +
+  xlim(0,300) +
+  ylim(0,400) +
+  theme_minimal() +
+  labs(title = "Marginal Abatement Cost Curves by Water District", y = "Marginal Abatement Cost ($/AF)", x = "Quantity Abated (AF)") +
+  theme(legend.position = c(.85,.75))
+```
+
+## Question 2
+Using the baseline water use of each district (E0), the marginal abatement curves (following the form P = M * Q, where M is each districts positive slope and Q is the quantity abated), and the equation A = E0 - E (where A is the quantity abated and E is quantity used post-abatement), one can derive the demand curves for each district using basic algebra:
+
+P = M * Q
+
+P = M * (E0 - E)
+
+P = (M * E0) - (M * E)
+
+```{r}
+#Deriving Demand Functions & their inverses - inverse functions will be used in part 3c
+
+kern_demand <- function(emiss) { 
+  demand <- (kern_slope * w_base_kern) - (kern_slope * emiss)
+  return(demand)
+}
+kern_demand_inv <- function(demand) {
+  emiss <- w_base_kern - (demand / kern_slope)
+  return(emiss)
+}
+
+ant_demand <- function(emiss) {
+  demand <- (ant_slope * w_base_ant) - (ant_slope * emiss)
+  return(demand)
+}
+ant_demand_inv <- function(demand) {
+  emiss <- w_base_ant - (demand / ant_slope)
+  return(emiss)
+}
+
+vent_demand <- function(emiss) {
+  demand <- (vent_slope * w_base_vent) - (vent_slope * emiss)
+  return(demand)
+}
+vent_demand_inv <- function(demand) {
+  emiss <- w_base_vent - (demand / vent_slope)
+  return(emiss)
+}
+
+moj_demand <- function(emiss) {
+  demand <- (moj_slope * w_base_moj) - (moj_slope * emiss)
+  return(demand)
+}
+moj_demand_inv <- function(demand) {
+  emiss <- w_base_moj - (demand / moj_slope)
+  return(emiss)
+}
+
+agg_demand <- function(emiss) {
+  demand <- -(ant_demand(0) * emiss)/agg_base + ant_demand(0)
+  return(demand) # doesnt have steps cuz this is derived from x and why intercept
+}
+
+agg_abatement_cost <- function(emiss){
+  cost <- (agg_a_slope) * emiss
+  return(cost)
+}
+```
+
+```{r, fig.align="center"}
+#plotting demand curves
+ggplot() +
+  stat_function(fun = kern_demand, aes(color = "Kern")) +
+  stat_function(fun = vent_demand, aes(color = "Ventura")) +
+  stat_function(fun = moj_demand, aes(color = "Mojave")) +
+  stat_function(fun = ant_demand, aes(color = "Antelope")) +
+  #stat_function(fun = agg_demand, color = "purple") +
+  scale_color_manual(values = c("red","blue","green","orange")) +
+  ylim(0,700) +
+  xlim(0,300) +
+  theme_minimal() +
+  labs(title = "Marginal Demand Curves for Water Usage by District", x = "Quantity Water Used (AF)", y = "Marginal Cost of Usage ($/AF)") + theme(legend.title = element_blank(), legend.position = c(.85,.85))
+```
+The Antelope District is willing to pay the most for the first AF of water as indicated by the red line's y-intercept that is above the other three districts'. 
+
+## Question 3
+#### Intervention A
+```{r}
+reduc_fact = (agg_base-(agg_base-w_abated))/agg_base
+reduc_pct = reduc_fact * 100
+mult_fact = 1 - reduc_fact
+
+w_base_kern_int_A = w_base_kern * mult_fact
+w_base_ant_int_A = w_base_ant * mult_fact
+w_base_moj_int_A = w_base_moj * mult_fact
+w_base_vent_int_A = w_base_vent * mult_fact
+```
+
+```{r}
+# cost of intervention to districts and total cost - using demand curves
+
+cost_a_kern <- integrate(kern_demand, w_base_kern_int_A, w_base_kern)$value
+cost_a_vent <- integrate(vent_demand, w_base_vent_int_A, w_base_vent)$value
+cost_a_ant <- integrate(ant_demand, w_base_ant_int_A, w_base_ant)$value
+cost_a_moj <- integrate(moj_demand, w_base_moj_int_A, w_base_moj)$value
+
+total_cost_a = cost_a_kern + cost_a_ant + cost_a_vent + cost_a_moj
+```
+(1) The stringency of this intervention is a `r round(reduc_pct,1)`% reduction in water usage across all districts, regardless of water usage rates or baseline figures.
+(2) The total cost of meeting the 500 AF target through this intervention is $`r format(round(total_cost_a,0),scientific=F)`. 
+(3) The cost to each district is as follows:
+```{r}
+int_a_summary <- c("Cost ($)",round(cost_a_kern,0),round(cost_a_vent,0),round(cost_a_ant,0),round(cost_a_moj,0)) %>% #create vector of values
+  t() %>% 
+  kable(col.names = c("","Kern","Ventura","Antelope","Mojave")) %>%
+  kable_styling(full_width = TRUE)
+
+int_a_summary
+```
+(4) No tax revenue is generated via this intervention. 
+
+#### Intervention B
+```{r}
+#Aggregate marginal price (P*) of 255 units of abatement is equal to tax 
+
+mpa_agg = w_abated*agg_a_slope #stringency?? P*w dollars/unit abatement 
+
+cost_b_kern = .5*(mpa_agg/kern_slope)*mpa_agg #triangles
+cost_b_vent = .5*(mpa_agg/vent_slope)*mpa_agg
+cost_b_ant = .5*(mpa_agg/ant_slope)*mpa_agg
+cost_b_moj = .5*(mpa_agg/moj_slope)*mpa_agg
+
+total_cost_b = cost_b_kern + cost_b_vent + cost_b_ant + cost_b_moj
+
+tax_rev_b = 500 * mpa_agg 
+
+```
+(1) The stringency of this intervention is a $`r round(mpa_agg,0)`/AF tax for water usage across all four districts.
+(2) The total cost of meeting the 500 AF target through this intervention is $`r format(round(total_cost_b,0),scientific=F)`.
+(3) The cost to each district is as follows:
+```{r}
+int_b_summary <- c("Cost ($)",round(cost_b_kern,0),round(cost_b_vent,0),round(cost_b_ant,0),round(cost_b_moj,0)) %>% #create vector of values
+  t() %>% 
+  kable(col.names = c("","Kern","Ventura","Antelope","Mojave")) %>%
+  kable_styling(full_width = TRUE)
+
+int_b_summary
+```
+(4) The tax revenue generated via this intervention is the total water usage across all four districts (500 AF) multiplied by the tax from part (1): $`r format(round(tax_rev_b,0),scientific=F)`
+
+#### Intervention C
+Regardless of initial allocation, the market will behave according to the equilibrium market principle. The tax from intervention B is equivalent to the price each district would pay for the last unit of abatement (P*). Plugging this value into the inverse of the demand curve functions will yield the quantity of water each district will use after trading is complete. The water used by each district after trade is as follows:
+
+- Kern..........`r round(kern_demand_inv(mpa_agg),0)` AF
+
+- Ventura......`r round(vent_demand_inv(mpa_agg),0)` AF
+
+- Antelope....`r round(ant_demand_inv(mpa_agg),0)` AF
+
+- Mojave.......`r round(moj_demand_inv(mpa_agg),0)` AF
+
+(1) The stringency of this intervention is a `r round(reduc_pct,1)`% reduction in water usage across all districts, regardless of water usage rates or baseline figures. Trading follows this initial allocation of reduction. 
+```{r}
+# cost of intervention to districts and total cost - using demand curves
+
+cost_c_kern <- integrate(kern_demand, kern_demand_inv(mpa_agg), w_base_kern)$value
+cost_c_vent <- integrate(vent_demand, vent_demand_inv(mpa_agg), w_base_vent)$value
+cost_c_ant <- integrate(ant_demand, ant_demand_inv(mpa_agg), w_base_ant)$value
+cost_c_moj <- integrate(moj_demand, moj_demand_inv(mpa_agg), w_base_moj)$value
+
+total_cost_c = cost_c_kern + cost_c_ant + cost_c_vent + cost_c_moj
+```
+(2) The total cost of meeting the 500 AF target through this intervention is $`r format(round(total_cost_c,0),scientific=F)`.
+(3) The cost to each district is as follows:
+```{r}
+int_c_summary <- c("Cost ($)",round(cost_c_kern,0),round(cost_c_vent,0),round(cost_c_ant,0),round(cost_c_moj,0)) %>% #create vector of values
+  t() %>% 
+  kable(col.names = c("","Kern","Ventura","Antelope","Mojave")) %>%
+  kable_styling(full_width = TRUE)
+
+int_c_summary
+```
+(4) No tax revenue is generated via this intervention.
+
+## Question 4
+Cost of drought to each district under interventions A,B,& C.
+
+**Intervention A:**
+```{r}
+w_abated = 455
+
+reduc_fact_2 = (agg_base-(agg_base-w_abated))/agg_base
+reduc_pct_2 = reduc_fact_2 * 100
+mult_fact_2 = 1 - reduc_fact_2
+
+w_base_kern_int_A_2 = w_base_kern * mult_fact_2
+w_base_ant_int_A_2 = w_base_ant * mult_fact_2
+w_base_moj_int_A_2 = w_base_moj * mult_fact_2
+w_base_vent_int_A_2 = w_base_vent * mult_fact_2
+
+#intervention A costs
+cost_a_kern_2 <- integrate(kern_demand, w_base_kern_int_A_2, w_base_kern)$value
+cost_a_vent_2 <- integrate(vent_demand, w_base_vent_int_A_2, w_base_vent)$value
+cost_a_ant_2 <- integrate(ant_demand, w_base_ant_int_A_2, w_base_ant)$value
+cost_a_moj_2 <- integrate(moj_demand, w_base_moj_int_A_2, w_base_moj)$value
+
+total_cost_a_2= cost_a_kern_2 + cost_a_ant_2 + cost_a_vent_2 + cost_a_moj_2
+
+int_a_summary_2 <- c("Cost ($)",round(cost_a_kern_2,0),round(cost_a_vent_2,0),round(cost_a_ant_2,0),round(cost_a_moj_2,0)) %>% #create vector of values
+  t() %>% 
+  kable(col.names = c("","Kern","Ventura","Antelope","Mojave")) %>%
+  kable_styling(full_width = TRUE)
+
+int_a_summary_2
+```
+
+**Intervention B:**
+```{r}
+mpa_agg = w_abated*agg_a_slope #stringency?? P*w dollars/unit abatement 
+
+cost_b_kern = .5*(mpa_agg/kern_slope)*mpa_agg #triangles
+cost_b_vent = .5*(mpa_agg/vent_slope)*mpa_agg
+cost_b_ant = .5*(mpa_agg/ant_slope)*mpa_agg
+cost_b_moj = .5*(mpa_agg/moj_slope)*mpa_agg
+
+total_cost_b = cost_b_kern + cost_b_vent + cost_b_ant + cost_b_moj
+
+tax_rev_b = 500 * mpa_agg 
+
+int_b_summary_2 <- c("Cost ($)",round(cost_b_kern,0),round(cost_b_vent,0),round(cost_b_ant,0),round(cost_b_moj,0)) %>% #create vector of values
+  t() %>% 
+  kable(col.names = c("","Kern","Ventura","Antelope","Mojave")) %>%
+  kable_styling(full_width = TRUE)
+
+int_b_summary_2
+```
+**Intervention C:**
+```{r}
+cost_c_kern <- integrate(kern_demand, kern_demand_inv(mpa_agg), w_base_kern)$value
+cost_c_vent <- integrate(vent_demand, vent_demand_inv(mpa_agg), w_base_vent)$value
+cost_c_ant <- integrate(ant_demand, ant_demand_inv(mpa_agg), w_base_ant)$value
+cost_c_moj <- integrate(moj_demand, moj_demand_inv(mpa_agg), w_base_moj)$value
+
+total_cost_c = cost_c_kern + cost_c_ant + cost_c_vent + cost_c_moj
+
+int_c_summary_2 <- c("Cost ($)",round(cost_c_kern,0),round(cost_c_vent,0),round(cost_c_ant,0),round(cost_c_moj,0)) %>% #create vector of values
+  t() %>% 
+  kable(col.names = c("","Kern","Ventura","Antelope","Mojave")) %>%
+  kable_styling(full_width = TRUE)
+
+int_c_summary_2
+```
+**Preferred Policies:**
+
+- Kern..........Policy A
+
+- Ventura......Policy A
+
+- Antelope....Policy B or C
+
+- Mojave.......Policy B or C
+
+Certain policies may be preferable over others to specific districts because the initial allocation of rights will dictate how many AF a district may have to buy or sell after allocation. If P* is the marginal abatement cost of the final unit of abatement for each district, then each district will have a unique Q* depending on the shape of their abatement curves. Depending on whether the allocation rights of each district fall above or below their unique value of Q* for each policy will dictate whether that policy is preferable to that specific district or not. To generalize for the four regions present, more water-rich regions with flatter abatement curves (Kern & Ventura) prefer a standard percentage reduction because they are more equipped to bear the costs of abatement. Less water-rich regions with steeper abatement curves (Antelope & Mojave) prefer more equitable policies or policies that allow trade because they are not as financially equipped to bear the costs of abating according to a percentage rate.
